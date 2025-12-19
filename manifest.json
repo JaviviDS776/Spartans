@@ -5,7 +5,7 @@
   "theme_color": "#6366f1",
   "background_color": "#ffffff",
   "display": "standalone",
-  "orientation": "landscape",
+  "orientation": "any",
   "scope": "/",
   "start_url": "/",
   "categories": ["books", "education", "lifestyle"],
