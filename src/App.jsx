@@ -26,7 +26,7 @@ import {
     enableIndexedDbPersistence
 } from 'firebase/firestore';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Radar as RechartRadar, Tooltip } from 'recharts';
-import { Settings, Users, Calendar, LogIn, ChevronLeft, Trash2, Plus, AlertTriangle, Loader, Volleyball, CheckCircle, Zap, Shield, User, X, Power, Heart, Check, RotateCw, Trophy, RotateCcw, Briefcase, Ruler, Scale, Activity, Crosshair, Minus, Map as MapIcon, Upload as UploadIcon, LogOut, Search, GripVertical, History, WifiOff, Phone, CalendarDays, Hash, Hand, Expand, Pencil, ClipboardList, CloudRain, CreditCard, ArrowLeftRight, Layout, RefreshCw, Shirt } from 'lucide-react';
+import { Settings, Users, Calendar, LogIn, ChevronLeft, Trash2, Plus, AlertTriangle, Loader, Volleyball, CheckCircle, Zap, Shield, User, X, Power, Heart, Check, RotateCw, Trophy, RotateCcw, Briefcase, Ruler, Scale, Activity, Crosshair, Minus, Map as MapIcon, Upload as UploadIcon, LogOut, Search, GripVertical, History, WifiOff, Phone, CalendarDays, Hash, Hand, Expand, Pencil, ClipboardList, CloudRain, CreditCard, ArrowLeftRight, Layout, RefreshCw, Shirt, Dumbbell, Medal } from 'lucide-react';
 
 // --- 1. CONFIGURACIÓN DE FIREBASE ---
 const firebaseConfig = {
@@ -53,9 +53,11 @@ const getCollections = (userId) => {
         ATAQUES: `${base}/ataques`, 
         BLOQUEOS: `${base}/bloqueos`, 
         RECEPCIONES: `${base}/recepciones`, 
-        DEFENSAS: `${base}/defensas`, 
+        DEFENSAS: `${base}/defensas`,
+        COLOCACION: `${base}/colocacion`, 
         ACTITUD: `${base}/actitud`, 
         ESTADISTICAS_GLOBALES: `${base}/estadisticas_globales`, 
+        ESTADISTICAS_ENTRENAMIENTO: `${base}/estadisticas_entrenamiento`, 
         ALINEACIONES: `${base}/alineaciones`, 
         STAFF: `${base}/staff`, 
         ENTRENAMIENTOS: `${base}/entrenamientos`, 
@@ -68,9 +70,7 @@ const RAMAS = ['Varonil', 'Femenil'];
 
 const initialPlayers = [];
 
-const initialMatches = [
-    { id: 'm1', equipo_rival: 'Los Centuriones', fecha: '2025-11-21 20:00', lugar: 'Polideportivo Central', is_completed: false },
-];
+const initialMatches = [];
 
 const initialServeTypes = [{ id: 'ts1', nombre: 'Potencia' }, { id: 'ts2', nombre: 'Flotado' }, { id: 'ts3', nombre: 'Estático' }];
 
@@ -135,7 +135,6 @@ function useFirebase() {
                 const app = initializeApp(firebaseConfig);
                 const firestore = getFirestore(app);
                 
-                // --- HABILITAR PERSISTENCIA OFFLINE ---
                 try {
                     await enableIndexedDbPersistence(firestore);
                     console.log("Persistencia offline habilitada correctamente.");
@@ -146,7 +145,6 @@ function useFirebase() {
                         console.warn("El navegador no soporta persistencia offline.");
                     }
                 }
-                // -------------------------------------
 
                 const authInstance = getAuth(app);
                 setDb(firestore); 
@@ -214,16 +212,13 @@ function useFirebase() {
         const collections = getCollections(currentUserId);
         const checkAndPopulate = async (colName, data) => {
             try {
-                // Si estamos offline, getDocs tirará de caché si existe
                 const s = await getDocs(collection(database, colName));
                 if (s.empty) {
-                    // Solo intentar poblar si la conexión lo permite o si es la primera vez real
                     for (const item of data) await setDoc(doc(database, colName, item.id), { ...item, createdAt: serverTimestamp(), createdBy: currentUserId });
                 }
             } catch(e) { console.error("Populate Error (posiblemente offline)", e); }
         };
         
-        // Solo intentamos inicializar datos base si estamos online o si confiamos en que la caché está vacía
         if (navigator.onLine) {
             await checkAndPopulate(collections.JUGADORES, initialPlayers);
             await checkAndPopulate(collections.PARTIDOS, initialMatches);
@@ -235,10 +230,12 @@ function useFirebase() {
     return { db, auth, userId, userName, userPhoto, isAuthReady, error, loginWithGoogle, logout, isOffline };
 }
 
-// --- 5. FUNCIONES DE BASE DE DATOS ---
-const handleGlobalStatsUpdate = async (db, userId, playerId, statType, resultType) => {
+// --- 5. FUNCIONES DE BASE DE DATOS (ACTUALIZADAS PARA ENTRENAMIENTO) ---
+const handleGlobalStatsUpdate = async (db, userId, playerId, statType, resultType, isTraining = false) => {
     if (!db || !userId || !playerId) return;
     const collections = getCollections(userId);
+
+    const targetCollection = isTraining ? collections.ESTADISTICAS_ENTRENAMIENTO : collections.ESTADISTICAS_GLOBALES;
 
     const map = {
         'SAQUE_ACE': 'saques_aces', 'SAQUE_MALO': 'saques_errores', 'SAQUE_BUENO': 'saques_buenos',
@@ -246,24 +243,36 @@ const handleGlobalStatsUpdate = async (db, userId, playerId, statType, resultTyp
         'BLOQUEO_DIRECTO': 'bloqueos_directos', 'BLOQUEO_ROZE': 'bloqueos_roze', 'BLOQUEO_USADO': 'bloqueos_usado_otro_equipo', 'BLOQUEO_RED': 'bloqueos_usado_otro_equipo',
         'RECEPCION_BUENA': 'recepciones_buenas', 'RECEPCION_REGULAR': 'recepciones_regulares', 'RECEPCION_MALA': 'recepciones_malas',
         'DEFENSA_BUENA': 'defensas_buenas', 'DEFENSA_REGULAR': 'defensas_regulares', 'DEFENSA_FALLIDA': 'defensas_malas',
+        'COLOCACION_PERFECTA': 'colocacion_perfecta', 'COLOCACION_BUENA': 'colocacion_buena', 'COLOCACION_ERROR': 'colocacion_mala',
         'ACTITUD_PERFECTA': 'actitud_perfecta', 'ACTITUD_BUENA': 'actitud_buena', 'ACTITUD_REGULAR': 'actitud_regular', 'ACTITUD_MALA': 'actitud_mala', 'ACTITUD_PÉSIMA': 'actitud_pesima'
     };
     const field = map[`${statType}_${resultType}`];
     if (field) {
         try {
-            await setDoc(doc(db, collections.ESTADISTICAS_GLOBALES, playerId), { jugador_id: playerId, [field]: increment(1) }, { merge: true });
+            await setDoc(doc(db, targetCollection, playerId), { jugador_id: playerId, [field]: increment(1) }, { merge: true });
         } catch(e) { console.error("Stats Update Error", e); }
     }
 };
 
-const handleRegisterEvent = async (db, userId, matchId, playerId, statType, resultType, extraData = {}) => {
+const handleRegisterEvent = async (db, userId, contextId, playerId, statType, resultType, extraData = {}, isTraining = false) => {
     if (!db || !userId || !playerId) return;
     const collections = getCollections(userId);
-    const colName = { 'SAQUE': collections.SAQUES, 'ATAQUE': collections.ATAQUES, 'BLOQUEO': collections.BLOQUEOS, 'RECEPCION': collections.RECEPCIONES, 'DEFENSA': collections.DEFENSAS, 'ACTITUD': collections.ACTITUD }[statType];
+    const colName = { 'SAQUE': collections.SAQUES, 'ATAQUE': collections.ATAQUES, 'BLOQUEO': collections.BLOQUEOS, 'RECEPCION': collections.RECEPCIONES, 'DEFENSA': collections.DEFENSAS, 'COLOCACION': collections.COLOCACION, 'ACTITUD': collections.ACTITUD }[statType];
+    
+    const idField = isTraining ? { entrenamiento_id: contextId } : { partido_id: contextId };
+
     if (colName) {
         try {
-            await addDoc(collection(db, colName), { partido_id: matchId, jugador_id: playerId, resultado: resultType, createdAt: serverTimestamp(), createdBy: userId, ...extraData });
-            await handleGlobalStatsUpdate(db, userId, playerId, statType, resultType);
+            await addDoc(collection(db, colName), { 
+                ...idField, 
+                jugador_id: playerId, 
+                resultado: resultType, 
+                contexto: isTraining ? 'ENTRENAMIENTO' : 'PARTIDO',
+                createdAt: serverTimestamp(), 
+                createdBy: userId, 
+                ...extraData 
+            });
+            await handleGlobalStatsUpdate(db, userId, playerId, statType, resultType, isTraining);
         } catch(e) { console.error("Register Event Error", e); }
     }
 };
@@ -618,21 +627,37 @@ const AddStaffModal = ({ db, userId, isOpen, onClose }) => {
     );
 };
 
-const PlayerStatsModal = ({ isOpen, onClose, player, stats, db, userId }) => {
+const PlayerStatsModal = ({ isOpen, onClose, player, db, userId }) => {
     const [serveZones, setServeZones] = useState({});
     const [servePoints, setServePoints] = useState([]);
+    const [stats, setStats] = useState({});
+    const [viewMode, setViewMode] = useState('PARTIDO');
     const collections = getCollections(userId);
+
+    useEffect(() => {
+        if (!isOpen || !player || !db || !userId) return;
+        const targetCollection = viewMode === 'ENTRENAMIENTO' ? collections.ESTADISTICAS_ENTRENAMIENTO : collections.ESTADISTICAS_GLOBALES;
+        const docRef = doc(db, targetCollection, player.id);
+        const unsubscribeStats = onSnapshot(docRef, (docSnap) => setStats(docSnap.exists() ? docSnap.data() : {}));
+        return () => unsubscribeStats();
+    }, [isOpen, player, db, userId, viewMode]);
 
     useEffect(() => {
         if (!isOpen || !player || !db || !userId) return;
         const q = query(collection(db, collections.SAQUES), where("jugador_id", "==", player.id));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const zones = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }; const points = [];
-            snapshot.docs.forEach(doc => { const d = doc.data(); if (d.zona) zones[d.zona] = (zones[d.zona] || 0) + 1; if (d.x_percent) points.push({ x: d.x_percent, y: d.y_percent, res: d.resultado }); });
+            snapshot.docs.forEach(doc => { 
+                const d = doc.data(); 
+                if (viewMode === 'ENTRENAMIENTO' && d.contexto !== 'ENTRENAMIENTO') return;
+                if (viewMode === 'PARTIDO' && d.contexto === 'ENTRENAMIENTO') return;
+                if (d.zona) zones[d.zona] = (zones[d.zona] || 0) + 1; 
+                if (d.x_percent) points.push({ x: d.x_percent, y: d.y_percent, res: d.resultado }); 
+            });
             setServeZones(zones); setServePoints(points);
         }, (e) => console.error("Serve Stats Error", e));
         return () => unsubscribe();
-    }, [isOpen, player, db, userId]);
+    }, [isOpen, player, db, userId, viewMode]);
 
     if (!isOpen || !player) return null;
     const calc = (g, t) => t > 0 ? Math.round((g/t)*100) : 0;
@@ -641,14 +666,21 @@ const PlayerStatsModal = ({ isOpen, onClose, player, stats, db, userId }) => {
     const tSaq = (stats.saques_aces||0)+(stats.saques_errores||0)+(stats.saques_buenos||0);
     const tBlo = (stats.bloqueos_directos||0)+(stats.bloqueos_roze||0)+(stats.bloqueos_usado_otro_equipo||0);
     const tRec = (stats.recepciones_buenas||0)+(stats.recepciones_regulares||0)+(stats.recepciones_malas||0);
+    const tDef = (stats.defensas_buenas||0)+(stats.defensas_regulares||0)+(stats.defensas_malas||0);
+    const tCol = (stats.colocacion_perfecta||0)+(stats.colocacion_buena||0)+(stats.colocacion_mala||0);
 
     const data = [
         { stat: 'Ataque', val: calc(stats.ataques_buenos||0, tAtk), full: 100 }, 
         { stat: 'Saque', val: calc(stats.saques_aces||0, tSaq), full: 100 }, 
         { stat: 'Bloqueo', val: calc((stats.bloqueos_directos||0)+(stats.bloqueos_roze||0), tBlo), full: 100 },
         { stat: 'Recepción', val: calc((stats.recepciones_buenas||0)+(stats.recepciones_regulares||0), tRec), full: 100 },
+        { stat: 'Defensa', val: calc((stats.defensas_buenas||0)+(stats.defensas_regulares||0), tDef), full: 100 },
         { stat: 'Actitud', val: calc((stats.actitud_perfecta||0)+(stats.actitud_buena||0), (stats.actitud_perfecta||0)+(stats.actitud_buena||0)+(stats.actitud_regular||0)+(stats.actitud_mala||0)+(stats.actitud_pesima||0)), full: 100 }
     ];
+
+    if (['Armador', 'Líbero'].includes(player.posicion)) {
+        data.push({ stat: 'Colocación', val: calc((stats.colocacion_perfecta||0)+(stats.colocacion_buena||0), tCol), full: 100 });
+    }
     
     const maxZone = Math.max(...Object.values(serveZones), 1);
     const getAlpha = (c) => (c / maxZone) * 0.8; 
@@ -668,7 +700,6 @@ const PlayerStatsModal = ({ isOpen, onClose, player, stats, db, userId }) => {
                                 <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded">#{player.numero}</span>
                                 <span className="bg-gray-700 text-gray-300 text-xs font-bold px-2 py-0.5 rounded border border-gray-600">{player.posicion}</span>
                                 <span className="bg-gray-700 text-gray-300 text-xs font-bold px-2 py-0.5 rounded border border-gray-600">{age} Años</span>
-                                <span className={`text-xs font-bold px-2 py-0.5 rounded border ${player.rama === 'Varonil' ? 'bg-blue-900/50 border-blue-600 text-blue-200' : 'bg-pink-900/50 border-pink-600 text-pink-200'}`}>{player.rama || 'Varonil'}</span>
                             </div>
                         </div>
                     </div>
@@ -676,7 +707,6 @@ const PlayerStatsModal = ({ isOpen, onClose, player, stats, db, userId }) => {
                 </div>
 
                 <div className="grid md:grid-cols-3 gap-6">
-                    {/* Columna 1: Ficha Técnica */}
                     <div className="space-y-4 md:col-span-1">
                         <div className="bg-gray-700/30 border border-gray-600 p-4 rounded-xl">
                             <h3 className="font-bold mb-3 text-red-400 text-sm uppercase tracking-widest flex items-center"><Briefcase className="w-4 h-4 mr-2"/> Ficha Técnica</h3>
@@ -691,38 +721,49 @@ const PlayerStatsModal = ({ isOpen, onClose, player, stats, db, userId }) => {
                                 <div className="flex justify-between pt-1"><span>En equipo desde:</span> <span className="font-bold text-white">{player.fecha_ingreso || 'N/A'}</span></div>
                             </div>
                         </div>
-                        {player.telefono && (
-                            <div className="bg-gray-700/30 border border-gray-600 p-3 rounded-xl flex items-center justify-between">
-                                <span className="text-xs text-gray-400 font-bold uppercase flex items-center"><Phone className="w-3 h-3 mr-2"/> Contacto</span>
-                                <span className="text-sm font-bold text-white">{player.telefono}</span>
-                            </div>
-                        )}
                     </div>
 
-                    {/* Columna 2 y 3: Gráficos y Stats */}
                     <div className="md:col-span-2 space-y-6">
+                        <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-700 w-full mb-2">
+                            <button onClick={()=>setViewMode('PARTIDO')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition flex items-center justify-center ${viewMode==='PARTIDO'?'bg-red-600 text-white shadow':'text-gray-500 hover:text-gray-300'}`}>
+                                <Trophy className="w-3 h-3 mr-1"/> Partidos
+                            </button>
+                            <button onClick={()=>setViewMode('ENTRENAMIENTO')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition flex items-center justify-center ${viewMode==='ENTRENAMIENTO'?'bg-emerald-600 text-white shadow':'text-gray-500 hover:text-gray-300'}`}>
+                                <Dumbbell className="w-3 h-3 mr-1"/> Entrenamientos
+                            </button>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-4 h-[250px]">
                             <div className="bg-gray-900 rounded-xl border border-gray-700 p-2 relative">
-                                <p className="absolute top-2 left-2 text-[10px] text-gray-500 font-bold uppercase">Rendimiento General</p>
-                                <ResponsiveContainer><RadarChart cx="50%" cy="55%" outerRadius="65%" data={data}><PolarGrid stroke="#374151" /><PolarAngleAxis dataKey="stat" tick={{ fill: '#9ca3af', fontSize: 10, fontWeight: 'bold' }} /><PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} /><RechartRadar dataKey="val" stroke="#ef4444" fill="#ef4444" fillOpacity={0.5} /><Tooltip contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#fff', fontSize: '12px' }} itemStyle={{ color: '#fff' }}/></RadarChart></ResponsiveContainer>
+                                <p className="absolute top-2 left-2 text-[10px] text-gray-500 font-bold uppercase">Rendimiento {viewMode === 'PARTIDO' ? 'Competición' : 'Prácticas'}</p>
+                                <ResponsiveContainer><RadarChart cx="50%" cy="55%" outerRadius="65%" data={data}><PolarGrid stroke="#374151" /><PolarAngleAxis dataKey="stat" tick={{ fill: '#9ca3af', fontSize: 10, fontWeight: 'bold' }} /><PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} /><RechartRadar dataKey="val" stroke={viewMode==='PARTIDO'?"#ef4444":"#10b981"} fill={viewMode==='PARTIDO'?"#ef4444":"#10b981"} fillOpacity={0.5} /><Tooltip contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#fff', fontSize: '12px' }} itemStyle={{ color: '#fff' }}/></RadarChart></ResponsiveContainer>
                             </div>
                             <div className="bg-gray-900 rounded-xl border border-gray-700 p-2 relative flex flex-col items-center justify-center">
                                 <p className="absolute top-2 left-2 text-[10px] text-gray-500 font-bold uppercase">Mapa de Calor (Saque)</p>
                                 <div className="relative w-3/4 aspect-square grid grid-cols-3 grid-rows-2 gap-0.5">
-                                     {[1,6,5,2,3,4].map(z => <div key={z} className="flex items-center justify-center border border-gray-800/50 font-bold text-xl text-white/10 rounded-sm" style={{backgroundColor: `rgba(220, 38, 38, ${getAlpha(serveZones[z]||0)})`}}>{z}</div>)}
+                                     {[1,6,5,2,3,4].map(z => <div key={z} className="flex items-center justify-center border border-gray-800/50 font-bold text-xl text-white/10 rounded-sm" style={{backgroundColor: `rgba(${viewMode==='PARTIDO'?'220, 38, 38':'16, 185, 129'}, ${getAlpha(serveZones[z]||0)})`}}>{z}</div>)}
                                      {servePoints.map((pt, i) => <div key={i} className={`absolute w-2 h-2 rounded-full shadow-sm ${pt.res==='ACE'?'bg-emerald-400':(pt.res==='MALO'?'bg-red-500':'bg-blue-400')}`} style={{ left: `${pt.x}%`, top: `${pt.y}%`, transform: 'translate(-50%, -50%)' }} />)}
                                 </div>
                             </div>
                         </div>
 
                         <div className="bg-gray-700/30 border border-gray-600 p-4 rounded-xl">
-                            <h3 className="font-bold mb-3 text-red-400 text-sm uppercase tracking-widest">Resumen Estadístico</h3>
+                            <h3 className="font-bold mb-3 text-red-400 text-sm uppercase tracking-widest">Resumen {viewMode === 'PARTIDO' ? 'Global' : 'Entrenamiento'}</h3>
                             <div className="grid grid-cols-4 gap-4 text-center">
                                 <div className="bg-gray-800 p-2 rounded-lg border border-gray-700"><p className="text-2xl font-black text-white">{tAtk}</p><p className="text-[10px] text-gray-400 uppercase">Ataques</p></div>
                                 <div className="bg-gray-800 p-2 rounded-lg border border-gray-700"><p className="text-2xl font-black text-white">{stats.saques_aces||0}</p><p className="text-[10px] text-gray-400 uppercase">Aces</p></div>
                                 <div className="bg-gray-800 p-2 rounded-lg border border-gray-700"><p className="text-2xl font-black text-white">{tBlo}</p><p className="text-[10px] text-gray-400 uppercase">Bloqueos</p></div>
                                 <div className="bg-gray-800 p-2 rounded-lg border border-gray-700"><p className="text-2xl font-black text-white">{data.find(d=>d.stat==='Actitud')?.val || 0}%</p><p className="text-[10px] text-gray-400 uppercase">Actitud</p></div>
                             </div>
+                            {/* Mostrar Colocación si es relevante */}
+                            {['Armador', 'Líbero'].includes(player.posicion) && (
+                                <div className="mt-4 pt-4 border-t border-gray-600 grid grid-cols-1 text-center">
+                                    <div className="bg-yellow-900/20 p-2 rounded-lg border border-yellow-700">
+                                        <p className="text-2xl font-black text-yellow-500">{stats.colocacion_perfecta || 0}</p>
+                                        <p className="text-[10px] text-yellow-200 uppercase">Colocaciones Perfectas</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -756,6 +797,100 @@ const FinalAttitudeModal = ({ db, userId, matchId, players, isOpen, onClose, han
     );
 };
 
+const FinalTrainingAttitudeModal = ({ db, userId, session, players, isOpen, onClose, handleGlobalStatsUpdate, onSessionComplete, showToast }) => {
+    const [attitudes, setAttitudes] = useState({});
+    const collections = getCollections(userId);
+
+    // Initialización robusta de actitudes
+    useEffect(() => { 
+        if(isOpen) {
+            const initialAttitudes = {};
+            const hasAttendanceData = session.attendance && Object.keys(session.attendance).length > 0;
+            
+            players.forEach(p => {
+                // Si hay datos de asistencia, usar 'Presente' para marcar por defecto como PERFECTA, si no, N/A
+                // Si NO hay datos de asistencia (sesión antigua o no marcada), marcar todos como PERFECTA para facilitar
+                let defaultVal = 'PERFECTA';
+                
+                if (hasAttendanceData) {
+                    const isPresent = session.attendance[p.id] === 'Presente';
+                    defaultVal = isPresent ? 'PERFECTA' : 'N/A';
+                }
+                
+                initialAttitudes[p.id] = defaultVal;
+            });
+            setAttitudes(initialAttitudes);
+        } 
+    }, [isOpen, players, session]);
+
+    if (!isOpen) return null;
+
+    const save = async () => {
+        const batch = []; const ts = serverTimestamp();
+        try {
+            for(const p of players) {
+                const att = attitudes[p.id];
+                // Solo guardar si tiene una actitud válida (ignorar N/A)
+                if (att && att !== 'N/A') {
+                    batch.push(addDoc(collection(db, collections.ACTITUD), { 
+                        entrenamiento_id: session.id, 
+                        jugador_id: p.id, 
+                        resultado: att, 
+                        contexto: 'ENTRENAMIENTO', 
+                        createdAt: ts 
+                    }));
+                    await handleGlobalStatsUpdate(db, userId, p.id, 'ACTITUD', att, true);
+                }
+            }
+            await Promise.all(batch); 
+            showToast("Entrenamiento finalizado y actitudes guardadas", "success");
+            onClose(); onSessionComplete();
+        } catch(e) { console.error("Finalize Error", e); showToast("Error al finalizar", "error"); }
+    };
+
+    const OPTS = ['PERFECTA','BUENA','REGULAR','MALA','PÉSIMA', 'N/A'];
+    
+    return (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-80 flex items-center justify-center p-4">
+            <div className="bg-gray-800 border border-gray-700 text-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
+                <div className="flex justify-between items-center mb-6">
+                     <h3 className="font-bold text-emerald-500 text-xl">Evaluar Actitud (Entrenamiento)</h3>
+                     <button onClick={onClose}><X className="text-gray-400"/></button>
+                </div>
+                
+                {players.length === 0 && <p className="text-gray-500 text-center py-4">No hay jugadores disponibles para evaluar.</p>}
+
+                {players.map(p => {
+                    const isNA = attitudes[p.id] === 'N/A';
+                    return (
+                        <div key={p.id} className={`mb-3 flex flex-col sm:flex-row justify-between items-center p-2 rounded-lg transition ${isNA ? 'bg-gray-800 border border-gray-700 opacity-60' : 'bg-gray-700/50 border border-transparent'}`}>
+                            <span className="font-bold w-full sm:w-1/3 truncate mb-2 sm:mb-0 text-center sm:text-left">{p.nombre}</span>
+                            <div className="flex gap-1 w-full sm:w-2/3 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+                                {OPTS.map(o => (
+                                    <button 
+                                        key={o} 
+                                        onClick={()=>setAttitudes(pr=>({...pr,[p.id]:o}))} 
+                                        className={`flex-1 py-1 px-2 text-[10px] rounded font-bold transition whitespace-nowrap
+                                            ${attitudes[p.id]===o 
+                                                ? (o==='N/A' ? 'bg-gray-600 text-gray-300' : 'bg-emerald-600 text-white shadow-lg') 
+                                                : 'bg-gray-700 hover:bg-gray-600 text-gray-400'}`
+                                        }
+                                    >
+                                        {o}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+                <button onClick={save} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white p-3 rounded-lg font-bold mt-6 text-lg shadow-lg">
+                    FINALIZAR ENTRENAMIENTO
+                </button>
+            </div>
+        </div>
+    );
+};
+
 // --- 8. INTERFAZ DE JUEGO (TRACKING) ---
 
 const PlayerActionCard = ({ player, posLabel, onClick, isServer, disabled, showRole }) => {
@@ -779,8 +914,6 @@ const ActiveCourt = ({ currentLineup, playersMap, servingTeam, rallyLive, onPlay
     const isLocal = servingTeam === 'LOCAL';
     const isPosDisabled = (posKey) => !isGameView && isLocal && !rallyLive && posKey !== 'pos1';
 
-    // Obtener el Libero desde matchData o playersMap
-    // matchData tiene el `libero_id`
     const liberoId = matchData?.libero_id;
     const libero = liberoId ? playersMap[liberoId] : null;
 
@@ -791,28 +924,18 @@ const ActiveCourt = ({ currentLineup, playersMap, servingTeam, rallyLive, onPlay
         
         if (!originalPlayer) return null;
 
-        // Regla: Central en Zaguero (1, 6, 5)
-        // Posiciones Zagueras: pos1, pos6, pos5
         const isBackRow = ['pos1', 'pos6', 'pos5'].includes(posKey);
         
         if (isBackRow && originalPlayer.posicion === 'Central' && libero) {
-            // Regla específica: "al perder el saque y cambiar a recepcion el central se ve reemplazado por el libero"
-            // Tambien: "centrales al pasar a la zona zaguero ... solo pueden sacar" -> Esto implica que en P1 (Turno de saque) está el central.
-            
-            // Si es P1 (Posición de saque)
             if (posKey === 'pos1') {
-                // Si es local y estamos sacando (o rally en vivo tras nuestro saque), juega el Central
-                if (servingTeam === 'LOCAL' || (servingTeam === null && !rallyLive)) { // Asumimos inicio o nuestro saque
+                if (servingTeam === 'LOCAL' || (servingTeam === null && !rallyLive)) { 
                     return originalPlayer;
                 }
-                // Si es rival el que saca (estamos en recepción), el central perdió el saque previamente, entra Libero
                 if (servingTeam === 'RIVAL') {
                     return libero;
                 }
-                // Si el rally está vivo y sacó el rival, seguimos en recepción/defensa -> Libero
                  return libero;
             } else {
-                // En P6 y P5 (Zaguero centro e izquierda), el central ya pasó su turno de saque. Siempre Libero.
                 return libero;
             }
         }
@@ -823,7 +946,6 @@ const ActiveCourt = ({ currentLineup, playersMap, servingTeam, rallyLive, onPlay
     const getOrderedPlayers = () => {
         if (!currentLineup) return [];
 
-        // Obtener jugadores aplicando la lógica de Líbero primero
         const p4 = getDisplayPlayer('pos4');
         const p3 = getDisplayPlayer('pos3');
         const p2 = getDisplayPlayer('pos2');
@@ -836,7 +958,6 @@ const ActiveCourt = ({ currentLineup, playersMap, servingTeam, rallyLive, onPlay
         const frontRow = [p4, p3, p2];
         const backRow = [p5, p6, p1];
 
-        // Función de ordenamiento (igual que antes)
         const sortRow = (pool, priorityList) => {
             const sorted = [];
             const tempPool = [...pool];
@@ -852,23 +973,7 @@ const ActiveCourt = ({ currentLineup, playersMap, servingTeam, rallyLive, onPlay
             return sorted.map(p => p || tempPool.shift());
         };
 
-        // El Libero cuenta como 'Líbero' o 'Central' para el ordenamiento visual si reemplazó a uno
-        // Pero su posición "Líbero" ya está definida en su objeto.
-        // Si el Libero reemplaza a un Central, queremos que aparezca donde iría el Central (medio atrás).
-        
         const finalFront = sortRow(frontRow, [['Punta'], ['Central'], ['Armador', 'Opuesto']]);
-        // Para atrás, el Libero suele ir al 5 o 6. Priorizamos Central/Libero en el medio (6) o donde caiga.
-        // La táctica común es: 5: Punta/Libero, 6: Libero/Punta, 1: Opuesto/Armador.
-        // Vamos a intentar respetar: Izq, Centro, Der.
-        // Zaguero Izq (5), Zaguero Centro (6), Zaguero Der (1)
-        // Normalmente: 5 (Punta), 6 (Libero/Central), 1 (Opuesto/Armador/Saque)
-        
-        // Pero la vista "Juego" pedida es:
-        // "libero o central, punta, acomodo u opuesto" -> Esto parece orden 5, 6, 1 ?
-        // Usuario dijo: "libero o central, punta, acomodo u opuesto"
-        
-        // Vamos a asumir el orden visual de izquierda a derecha en la fila de atrás:
-        // [Libero/Central], [Punta], [Acomodo/Opuesto]
         const finalBack = sortRow(backRow, [['Líbero', 'Central'], ['Punta'], ['Armador', 'Opuesto']]);
 
         return [...finalFront, ...finalBack];
@@ -891,12 +996,10 @@ const ActiveCourt = ({ currentLineup, playersMap, servingTeam, rallyLive, onPlay
                 <button onClick={onManualRotate} className="flex items-center px-3 py-1 bg-gray-800 text-red-400 border border-gray-700 hover:bg-gray-700 text-xs font-bold rounded-lg transition"><RotateCw className="w-3 h-3 mr-1"/> Rotar</button>
             </div>
             <div className="bg-gray-900 rounded-xl p-3 border-2 border-gray-700 flex-grow shadow-[inset_0_0_20px_rgba(0,0,0,0.5)] relative overflow-hidden">
-                {/* Court Design Elements */}
                 <div className="absolute top-0 left-0 right-0 h-full w-full pointer-events-none opacity-20 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')]"></div>
                 <div className="absolute top-0 left-0 right-0 h-1 bg-white opacity-40 w-full shadow-[0_0_10px_rgba(255,255,255,0.5)]"></div>
                 <div className="absolute top-1 left-1/2 transform -translate-x-1/2 bg-white/10 backdrop-blur text-white/50 text-[10px] px-3 py-0.5 rounded-b font-bold border border-t-0 border-white/10">RED</div>
                 
-                {/* Attack Line */}
                 <div className="absolute top-1/3 left-0 w-full h-0.5 bg-white opacity-20 border-t border-dashed border-gray-400"></div>
 
                 <div className="grid grid-cols-3 gap-3 h-full mt-4 relative z-10">
@@ -951,22 +1054,31 @@ const ServePlacementModal = ({ isOpen, onClose, player, onRegisterServe }) => {
     );
 };
 
-const PlayerActionSheet = ({ isOpen, onClose, player, onRegister, servingTeam, onRequestSubstitution }) => {
+const PlayerActionSheet = ({ isOpen, onClose, player, onRegister, servingTeam, onRequestSubstitution, isTraining }) => {
     const [step, setStep] = useState('CATEGORY');
     const [cat, setCat] = useState(null);
     useEffect(() => { if (isOpen) { setStep('CATEGORY'); setCat(null); } }, [isOpen]);
     if (!isOpen || !player) return null;
 
-    let CATS = [ { id: 'ATAQUE', l: 'Ataque', i: Zap, c: 'bg-orange-600' }, { id: 'BLOQUEO', l: 'Bloqueo', i: Power, c: 'bg-purple-600' }, { id: 'RECEPCION', l: 'Recepción', i: Shield, c: 'bg-blue-600' }, { id: 'DEFENSA', l: 'Defensa', i: Heart, c: 'bg-pink-600' } ];
+    let CATS = [ { id: 'SAQUE', l: 'Saque', i: Volleyball, c: 'bg-emerald-600' }, { id: 'ATAQUE', l: 'Ataque', i: Zap, c: 'bg-orange-600' }, { id: 'BLOQUEO', l: 'Bloqueo', i: Power, c: 'bg-purple-600' }, { id: 'RECEPCION', l: 'Recepción', i: Shield, c: 'bg-blue-600' }, { id: 'DEFENSA', l: 'Defensa', i: Heart, c: 'bg-pink-600' } ];
     
-    if (player.posicion === 'Líbero') CATS = CATS.filter(c => !['ATAQUE', 'BLOQUEO', 'SAQUE'].includes(c.id));
-    if (servingTeam === 'LOCAL') CATS = CATS.filter(c => c.id !== 'RECEPCION');
+    if (['Armador', 'Líbero'].includes(player.posicion)) {
+        CATS.push({ id: 'COLOCACION', l: 'Colocación', i: Hand, c: 'bg-yellow-600' });
+    }
+
+    if (!isTraining) {
+        if (player.posicion === 'Líbero') CATS = CATS.filter(c => !['ATAQUE', 'BLOQUEO', 'SAQUE'].includes(c.id));
+        if (servingTeam === 'LOCAL') CATS = CATS.filter(c => c.id !== 'RECEPCION');
+        CATS = CATS.filter(c => c.id !== 'SAQUE'); 
+    }
 
     const RES = {
+        'SAQUE': [{id:'ACE',l:'Ace',c:'bg-emerald-600'},{id:'BUENO',l:'Bueno',c:'bg-blue-500'},{id:'MALO',l:'Error',c:'bg-red-600'}],
         'ATAQUE': [{id:'BUENO',l:'Punto',c:'bg-emerald-600'},{id:'DEFENDIDO',l:'Defendido',c:'bg-blue-500'},{id:'BLOQUEADO',l:'Bloqueado',c:'bg-orange-600'},{id:'MALO',l:'Error',c:'bg-red-600'}],
         'BLOQUEO': [{id:'DIRECTO',l:'Punto',c:'bg-purple-600'},{id:'ROZE',l:'Roce',c:'bg-blue-500'},{id:'USADO',l:'Usado',c:'bg-orange-600'},{id:'RED',l:'Red',c:'bg-red-600'}],
         'RECEPCION': [{id:'BUENA',l:'Buena (A)',c:'bg-emerald-600'},{id:'REGULAR',l:'Regular (B)',c:'bg-yellow-600'},{id:'MALA',l:'Mala (C)',c:'bg-red-600'}],
         'DEFENSA': [{id:'BUENA',l:'Perfecta',c:'bg-emerald-600'},{id:'REGULAR',l:'Positiva',c:'bg-yellow-600'},{id:'FALLIDA',l:'Error',c:'bg-red-600'}],
+        'COLOCACION': [{id:'PERFECTA',l:'Perfecta',c:'bg-emerald-600'},{id:'BUENA',l:'Buena',c:'bg-blue-500'},{id:'ERROR',l:'Error',c:'bg-red-600'}]
     };
 
     return (
@@ -979,11 +1091,10 @@ const PlayerActionSheet = ({ isOpen, onClose, player, onRegister, servingTeam, o
                     <>
                         <div className="grid grid-cols-3 gap-3">
                             {CATS.map(c => <button key={c.id} onClick={()=>{setCat(c.id);setStep('RES')}} className={`${c.c} text-white p-3 rounded-xl shadow-lg border border-white/10 flex flex-col items-center hover:opacity-90 hover:scale-105 transition duration-200`}><c.i className="w-8 h-8 mb-2"/><span className="font-bold text-xs uppercase tracking-wider">{c.l}</span></button>)}
-                            {/* Botón de Cambio */}
-                            <button onClick={() => { onRequestSubstitution(player); onClose(); }} className="bg-gray-600 text-white p-3 rounded-xl shadow-lg border border-white/10 flex flex-col items-center hover:opacity-90 hover:scale-105 transition duration-200">
+                            {!isTraining && <button onClick={() => { onRequestSubstitution(player); onClose(); }} className="bg-gray-600 text-white p-3 rounded-xl shadow-lg border border-white/10 flex flex-col items-center hover:opacity-90 hover:scale-105 transition duration-200">
                                 <ArrowLeftRight className="w-8 h-8 mb-2"/>
                                 <span className="font-bold text-xs uppercase tracking-wider">Cambio</span>
-                            </button>
+                            </button>}
                         </div>
                     </>
                 ) : (
@@ -997,11 +1108,7 @@ const PlayerActionSheet = ({ isOpen, onClose, player, onRegister, servingTeam, o
 const SubstitutionModal = ({ isOpen, onClose, playerOut, playersMap, liveRotation, onSubstitute }) => {
     if (!isOpen || !playerOut) return null;
 
-    // Obtener los IDs de los jugadores que están actualmente en cancha
     const playersOnCourtIds = Object.values(liveRotation);
-    
-    // Filtrar jugadores: Solo mostrar aquellos que NO están en la cancha (La Banca)
-    // También filtramos por la misma rama del jugador que sale (opcional, pero recomendado)
     const benchPlayers = Object.values(playersMap).filter(p => !playersOnCourtIds.includes(p.id) && p.rama === playerOut.rama);
 
     return (
@@ -1134,7 +1241,6 @@ const MatchTracker = ({ db, userId, match, onGoBack, showToast }) => {
     };
 
     const performSubstitution = (outId, inId) => {
-        // Encontrar en qué posición está el jugador que sale
         const newRotation = { ...liveRotation };
         let posKey = null;
         for (const [key, val] of Object.entries(newRotation)) {
@@ -1150,7 +1256,6 @@ const MatchTracker = ({ db, userId, match, onGoBack, showToast }) => {
             const inPlayerName = playersMap[inId]?.nombre?.split(' ')[0];
             const outPlayerName = playersMap[outId]?.nombre?.split(' ')[0];
             showToast(`Cambio: Entra ${inPlayerName}, Sale ${outPlayerName}`, 'info');
-            // Opcional: Registrar evento de cambio en DB si se requiere historial
         }
     };
 
@@ -1196,7 +1301,7 @@ const MatchTracker = ({ db, userId, match, onGoBack, showToast }) => {
                 onPlayerClick={handleCardClick} 
                 onManualRotate={()=>setLiveRotation(rotateLineupClockwise(liveRotation))} 
                 isGameView={isGameView}
-                matchData={match} // Pass match data to access libero_id
+                matchData={match}
             />
             
             <PlayerActionSheet 
@@ -1226,7 +1331,128 @@ const MatchTracker = ({ db, userId, match, onGoBack, showToast }) => {
     );
 };
 
-const AttendanceManager = ({ db, userId, showToast }) => {
+// --- NUEVO COMPONENTE: TRAINING TRACKER ---
+const TrainingTracker = ({ db, userId, session, onGoBack, showToast }) => {
+    const [players, setPlayers] = useState([]); 
+    const [selectedPlayer, setSelectedPlayer] = useState(null);
+    const [lastAction, setLastAction] = useState(null);
+    const [filterPos, setFilterPos] = useState('TODOS');
+    const [search, setSearch] = useState('');
+    const [isAttitudeModalOpen, setIsAttitudeModalOpen] = useState(false);
+
+    const collections = getCollections(userId);
+
+    // Cargar jugadores
+    useEffect(() => {
+        if(db && userId && session) {
+            const q = query(collection(db, collections.JUGADORES));
+            const unsub = onSnapshot(q, s => {
+                const allPlayers = s.docs.map(d=>({id:d.id,...d.data()}));
+                setPlayers(allPlayers);
+            });
+            return () => unsub();
+        }
+    }, [db, userId, session]);
+
+    const onPlayerAction = async (pid, cat, res) => {
+        const p = players.find(p=>p.id===pid);
+        const pName = p?.nombre?.split(' ')[0] || 'Jugador';
+        setLastAction(`${pName} - ${cat}: ${res}`);
+        showToast(`${pName} - ${cat} Registrado (Entrenamiento)`, 'success');
+        
+        // Registrar evento con contexto ENTRENAMIENTO
+        await handleRegisterEvent(db, userId, session.id, pid, cat, res, {}, true);
+    };
+
+    const filteredPlayers = players.filter(p => {
+        const matchesPos = filterPos === 'TODOS' || p.posicion === filterPos;
+        const matchesSearch = p.nombre.toLowerCase().includes(search.toLowerCase()) || p.numero.includes(search);
+        // Filtrar por rama también para no mezclar si la sesión es de una rama
+        const matchesRama = session.rama ? p.rama === session.rama : true;
+        return matchesPos && matchesSearch && matchesRama;
+    });
+
+    return (
+        <div className="pb-24 space-y-4">
+            <div className="bg-gray-800 rounded-xl shadow-lg border-t-4 border-emerald-600 overflow-hidden sticky top-0 z-20">
+                <div className="p-3 bg-gray-900 border-b border-gray-700 flex justify-between items-center">
+                    <button onClick={onGoBack} className="text-emerald-500 font-bold flex items-center hover:text-emerald-400"><ChevronLeft className="w-4 h-4"/> Salir</button>
+                    <span className="text-xs font-bold text-emerald-600 animate-pulse uppercase">Modo Entrenamiento</span>
+                </div>
+                <div className="p-4 flex flex-col items-center bg-gray-800">
+                     <h2 className="text-xl font-black text-white">{session.date}</h2>
+                     <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{session.rama} - {players.length} Jugadores</p>
+                </div>
+                
+                {/* Buscador y Filtros en Tracker */}
+                <div className="px-4 pb-4 space-y-2 bg-gray-800">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4"/>
+                        <input className="w-full bg-gray-900 border border-gray-600 rounded-lg py-2 pl-10 pr-4 text-xs text-white placeholder-gray-500 focus:border-emerald-500 transition" placeholder="Buscar jugador..." value={search} onChange={e=>setSearch(e.target.value)} />
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                        {['TODOS','Punta','Central','Líbero','Armador','Opuesto'].map(f=><button key={f} onClick={()=>setFilterPos(f)} className={`px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition ${filterPos===f?'bg-emerald-600 text-white':'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>{f}</button>)}
+                    </div>
+                </div>
+
+                {lastAction && <div className="bg-gray-900 text-gray-400 text-xs text-center py-1 flex items-center justify-center"><History className="w-3 h-3 mr-1"/> Última: <span className="text-white ml-1 font-bold">{lastAction}</span></div>}
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+                {filteredPlayers.map(p => {
+                    const style = getRoleColor(p.posicion);
+                    const isPresent = session.attendance && session.attendance[p.id] === 'Presente';
+                    return (
+                        <div key={p.id} onClick={() => setSelectedPlayer(p)} className={`rounded-xl border ${style.border} ${style.bg} p-2 flex flex-col items-center cursor-pointer active:scale-95 transition shadow-lg relative`}>
+                             {!isPresent && <div className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" title="No marcado como presente"></div>}
+                             <div className="w-16 h-16 rounded-full bg-gray-700 overflow-hidden border-2 border-gray-500 mb-2">
+                                {p.fotografia ? <img src={p.fotografia} className="w-full h-full object-cover"/> : <User className="w-8 h-8 m-4 text-gray-500"/>}
+                            </div>
+                            <p className="font-bold text-gray-200 text-xs text-center truncate w-full">{p.nombre.split(' ')[0]}</p>
+                            <span className="text-[10px] bg-black/40 px-2 py-0.5 rounded text-gray-300 mt-1">{p.posicion}</span>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {filteredPlayers.length === 0 && (
+                <div className="text-center py-10 text-gray-500">
+                    <p>No se encontraron jugadores.</p>
+                </div>
+            )}
+
+            <div className="fixed bottom-20 right-6 z-40">
+                <button onClick={()=>setIsAttitudeModalOpen(true)} className="bg-emerald-600 text-white p-4 rounded-full shadow-2xl hover:scale-105 transition font-bold flex items-center border-2 border-emerald-400">
+                    <Medal className="w-5 h-5 mr-2"/> Finalizar y Evaluar
+                </button>
+            </div>
+
+            <PlayerActionSheet 
+                isOpen={!!selectedPlayer} 
+                onClose={()=>setSelectedPlayer(null)} 
+                player={selectedPlayer} 
+                onRegister={onPlayerAction} 
+                servingTeam={null} 
+                isTraining={true} 
+            />
+
+            <FinalTrainingAttitudeModal 
+                db={db} 
+                userId={userId} 
+                session={session} 
+                // CORRECCIÓN: Filtrar por rama en lugar de por asistencia estricta para evitar listas vacías
+                players={players.filter(p => session.rama ? p.rama === session.rama : true)}
+                isOpen={isAttitudeModalOpen} 
+                onClose={()=>setIsAttitudeModalOpen(false)} 
+                handleGlobalStatsUpdate={handleGlobalStatsUpdate} 
+                onSessionComplete={onGoBack} 
+                showToast={showToast} 
+            />
+        </div>
+    );
+};
+
+const AttendanceManager = ({ db, userId, showToast, onOpenTracker }) => {
     const [sessions, setSessions] = useState([]);
     const [players, setPlayers] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -1287,24 +1513,17 @@ const AttendanceManager = ({ db, userId, showToast }) => {
 
     const filteredPlayers = players.filter(p => p.rama === selectedRama);
 
-    const toggleStatus = (playerId) => {
-        const current = attendanceData[playerId] || 'Presente';
-        const next = {
-            'Presente': 'Ausente',
-            'Ausente': 'Justificado',
-            'Justificado': 'Lesionado',
-            'Lesionado': 'Presente'
-        }[current];
-        setAttendanceData({ ...attendanceData, [playerId]: next });
+    const toggleAttendance = (playerId, isChecked) => {
+        setAttendanceData(prev => ({
+            ...prev,
+            [playerId]: isChecked ? 'Presente' : 'Ausente'
+        }));
     };
 
     const getStatusColor = (status) => {
         switch(status) {
-            case 'Presente': return 'bg-emerald-600 text-white border-emerald-500';
-            case 'Ausente': return 'bg-red-600 text-white border-red-500';
-            case 'Justificado': return 'bg-yellow-600 text-white border-yellow-500';
-            case 'Lesionado': return 'bg-blue-600 text-white border-blue-500';
-            default: return 'bg-gray-700 text-gray-400';
+            case 'Presente': return 'bg-emerald-900/40 border-emerald-500/50 text-emerald-200';
+            default: return 'bg-gray-800 border-gray-600 text-gray-400';
         }
     };
 
@@ -1332,6 +1551,15 @@ const AttendanceManager = ({ db, userId, showToast }) => {
                                     <p className="text-emerald-400 text-xs font-bold flex items-center"><CheckCircle className="w-3 h-3 mr-1"/> Completado ({Object.keys(session.attendance || {}).filter(k => session.attendance[k] === 'Presente').length} presentes)</p>
                                 )}
                             </div>
+                            {/* BOTÓN PARA IR A ESTADÍSTICAS DE ENTRENAMIENTO */}
+                            {session.status !== 'Cancelled' && (
+                                <button 
+                                    onClick={() => onOpenTracker(session)}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white p-2 rounded-lg font-bold shadow-lg flex items-center text-xs"
+                                >
+                                    <Activity className="w-4 h-4 mr-1"/> Stats
+                                </button>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -1376,24 +1604,30 @@ const AttendanceManager = ({ db, userId, showToast }) => {
                                 <div>
                                     <div className="flex justify-between items-center mb-2">
                                         <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Lista de Jugadores ({filteredPlayers.length})</h4>
-                                        <div className="text-[10px] text-gray-500 flex gap-2">
-                                            <span className="flex items-center"><div className="w-2 h-2 bg-emerald-600 rounded-full mr-1"></div>Pres.</span>
-                                            <span className="flex items-center"><div className="w-2 h-2 bg-red-600 rounded-full mr-1"></div>Aus.</span>
-                                            <span className="flex items-center"><div className="w-2 h-2 bg-yellow-600 rounded-full mr-1"></div>Just.</span>
-                                        </div>
                                     </div>
                                     <div className="space-y-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
                                         {filteredPlayers.map(p => {
-                                            const status = attendanceData[p.id] || 'Presente';
+                                            const isPresent = attendanceData[p.id] === 'Presente';
                                             return (
-                                                <div key={p.id} onClick={() => toggleStatus(p.id)} className={`p-3 rounded-lg border flex justify-between items-center cursor-pointer transition select-none ${getStatusColor(status)} bg-opacity-20 border-opacity-50 hover:bg-opacity-30`}>
+                                                <div key={p.id} className={`p-3 rounded-lg border flex justify-between items-center transition select-none ${getStatusColor(isPresent ? 'Presente' : 'Ausente')}`}>
                                                     <div className="flex items-center">
                                                         <div className="w-8 h-8 rounded-full bg-gray-900 border border-gray-600 overflow-hidden mr-3">
                                                             {p.fotografia ? <img src={p.fotografia} className="w-full h-full object-cover"/> : <User className="w-5 h-5 m-1.5 text-gray-500"/>}
                                                         </div>
-                                                        <span className="font-bold text-sm">{p.nombre}</span>
+                                                        <div>
+                                                            <p className="font-bold text-sm text-gray-200">{p.nombre}</p>
+                                                            <p className="text-[9px] text-gray-500">{p.posicion}</p>
+                                                        </div>
                                                     </div>
-                                                    <span className={`text-[10px] font-black px-2 py-1 rounded uppercase bg-black bg-opacity-30`}>{status}</span>
+                                                    <label className="flex items-center space-x-2 cursor-pointer">
+                                                        <span className={`text-[10px] font-bold uppercase ${isPresent ? 'text-emerald-400' : 'text-gray-500'}`}>{isPresent ? 'Presente' : 'Ausente'}</span>
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="w-5 h-5 rounded border-gray-500 text-emerald-600 focus:ring-emerald-500 bg-gray-800"
+                                                            checked={isPresent}
+                                                            onChange={(e) => toggleAttendance(p.id, e.target.checked)}
+                                                        />
+                                                    </label>
                                                 </div>
                                             )
                                         })}
@@ -1429,7 +1663,7 @@ const PaymentsManager = ({ db, userId, showToast }) => {
 
     useEffect(() => {
         if (!db || !userId) return;
-        const qPayments = query(collection(db, collections.PAGOS)); // Simplificado: traer todo y filtrar en memoria para este ejemplo, idealmente filtrar por mes
+        const qPayments = query(collection(db, collections.PAGOS)); 
         const unsubPayments = onSnapshot(qPayments, s => {
             setPayments(s.docs.map(d => ({ id: d.id, ...d.data() })));
         });
@@ -1438,7 +1672,6 @@ const PaymentsManager = ({ db, userId, showToast }) => {
 
     const filteredPlayers = players.filter(p => p.rama === selectedRama);
     
-    // Mapa de pagos para el mes seleccionado: { playerId: true }
     const paymentsMap = useMemo(() => {
         const map = {};
         payments.forEach(p => {
@@ -1453,12 +1686,9 @@ const PaymentsManager = ({ db, userId, showToast }) => {
         const existingPayment = paymentsMap[player.id];
         try {
             if (existingPayment) {
-                // Si ya pagó, eliminamos el registro (o cambiamos estado)
                 await deleteDoc(doc(db, collections.PAGOS, existingPayment.id));
                 showToast(`Pago de ${player.nombre.split(' ')[0]} eliminado`, 'info');
             } else {
-                // Si no ha pagado, creamos el registro
-                // ID único compuesto para evitar duplicados: YYYY-MM_playerId
                 const docId = `${selectedMonth}_${player.id}`;
                 await setDoc(doc(db, collections.PAGOS, docId), {
                     playerId: player.id,
@@ -1840,13 +2070,14 @@ const ConfigManager = ({ db, userId, showToast }) => {
     return (<div className="space-y-6 pb-20"><h2 className="text-2xl font-black text-white tracking-tight">Configuración</h2><div className="flex bg-gray-800 p-1 rounded-lg border border-gray-700">{[{id: 'STAFF', label: 'Staff'}, {id: 'ASSIGN', label: 'Asignar'}].map(t => (<button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 py-2 text-sm font-bold rounded-md transition ${tab === t.id ? 'bg-gray-700 text-white shadow-sm border border-gray-600' : 'text-gray-500 hover:text-gray-300'}`}>{t.label}</button>))}</div>{tab === 'STAFF' && <StaffManager db={db} userId={userId} />}{tab === 'ASSIGN' && <AssignStaffManager db={db} userId={userId} />}</div>);
 };
 
-const NAVIGATION = { DASHBOARD: 'Plantilla', PARTIDOS: 'Partidos', ASISTENCIA: 'Asistencia', PAGOS: 'Pagos', ALINEACIONES: 'Alineaciones', CONFIG: 'Config', TRACKER: 'Tracker' };
+const NAVIGATION = { DASHBOARD: 'Plantilla', PARTIDOS: 'Partidos', ASISTENCIA: 'Asistencia', PAGOS: 'Pagos', ALINEACIONES: 'Alineaciones', CONFIG: 'Config', TRACKER: 'Tracker', TRAINING_TRACKER: 'TrainingTracker' };
 
 // --- APP PRINCIPAL ---
 export default function App() {
     const { db, userId, isAuthReady, error, loginWithGoogle, logout, userName, userPhoto, isOffline } = useFirebase();
     const [view, setView] = useState(NAVIGATION.DASHBOARD);
     const [trackedMatch, setTrackedMatch] = useState(null);
+    const [trackedSession, setTrackedSession] = useState(null); // Nueva sesión de tracking
     const [toast, setToast] = useState(null);
 
     const showToast = (message, type = 'info') => {
@@ -1854,7 +2085,9 @@ export default function App() {
     };
 
     const handleStartTracking = (id, match) => { setTrackedMatch(match); setView(NAVIGATION.TRACKER); };
-    const handleGoBack = () => { setTrackedMatch(null); setView(NAVIGATION.PARTIDOS); };
+    const handleStartTrainingTracking = (session) => { setTrackedSession(session); setView(NAVIGATION.TRAINING_TRACKER); };
+    const handleGoBack = () => { setTrackedMatch(null); setTrackedSession(null); setView(NAVIGATION.PARTIDOS); };
+    const handleGoBackTraining = () => { setTrackedSession(null); setView(NAVIGATION.ASISTENCIA); };
 
     if (error) return <div className="p-8 text-red-500 text-center font-bold">Error: {error}</div>;
     if (!isAuthReady || !db) return <LoadingIndicator />;
@@ -1865,10 +2098,11 @@ export default function App() {
         switch (view) {
             case NAVIGATION.DASHBOARD: return <PlayerList db={db} userId={userId} showToast={showToast} />;
             case NAVIGATION.PARTIDOS: return <MatchesList db={db} userId={userId} onStartTracking={handleStartTracking} showToast={showToast} />;
-            case NAVIGATION.ASISTENCIA: return <AttendanceManager db={db} userId={userId} showToast={showToast} />;
+            case NAVIGATION.ASISTENCIA: return <AttendanceManager db={db} userId={userId} showToast={showToast} onOpenTracker={handleStartTrainingTracking} />;
             case NAVIGATION.PAGOS: return <PaymentsManager db={db} userId={userId} showToast={showToast} />;
             case NAVIGATION.ALINEACIONES: return <LineupManager db={db} userId={userId} showToast={showToast} />;
             case NAVIGATION.TRACKER: return trackedMatch ? <MatchTracker db={db} userId={userId} match={trackedMatch} onGoBack={handleGoBack} showToast={showToast} /> : <div>Error</div>;
+            case NAVIGATION.TRAINING_TRACKER: return trackedSession ? <TrainingTracker db={db} userId={userId} session={trackedSession} onGoBack={handleGoBackTraining} showToast={showToast} /> : <div>Error</div>;
             case NAVIGATION.CONFIG: return <ConfigManager db={db} userId={userId} showToast={showToast} />;
             default: return <PlayerList db={db} userId={userId} showToast={showToast} />;
         }
@@ -1877,12 +2111,12 @@ export default function App() {
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 font-sans selection:bg-red-500 selection:text-white">
             {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-            {isOffline && view !== NAVIGATION.TRACKER && (
+            {isOffline && view !== NAVIGATION.TRACKER && view !== NAVIGATION.TRAINING_TRACKER && (
                 <div className="bg-yellow-600 text-white text-xs font-bold text-center py-1 px-4 flex items-center justify-center">
                     <WifiOff className="w-3 h-3 mr-2"/> Modo Offline: Los cambios se guardarán localmente y se sincronizarán al recuperar la conexión.
                 </div>
             )}
-            {view !== NAVIGATION.TRACKER && (
+            {view !== NAVIGATION.TRACKER && view !== NAVIGATION.TRAINING_TRACKER && (
                 <header className="bg-gray-800 shadow-lg border-b border-gray-700 p-4 sticky top-0 z-20 flex justify-between items-center">
                     <h1 className="text-xl font-black text-white tracking-tighter flex items-center"><Volleyball className="w-5 h-5 text-red-600 mr-2"/> VoleyStats</h1>
                     <div className="flex items-center gap-2">
@@ -1896,7 +2130,7 @@ export default function App() {
                 </header>
             )}
             <main className="max-w-3xl mx-auto p-4">{renderContent()}</main>
-            {view !== NAVIGATION.TRACKER && (
+            {view !== NAVIGATION.TRACKER && view !== NAVIGATION.TRAINING_TRACKER && (
                 <nav className="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 flex justify-around p-2 z-30 pb-safe shadow-[0_-5px_10px_rgba(0,0,0,0.3)]">
                     {[ { id: NAVIGATION.DASHBOARD, icon: Users }, { id: NAVIGATION.PARTIDOS, icon: Calendar }, { id: NAVIGATION.ASISTENCIA, icon: ClipboardList }, { id: NAVIGATION.PAGOS, icon: CreditCard }, { id: NAVIGATION.ALINEACIONES, icon: Shield }, { id: NAVIGATION.CONFIG, icon: Settings } ].map(item => (
                         <button key={item.id} onClick={() => setView(item.id)} className={`flex flex-col items-center p-2 rounded-xl transition duration-200 ${view === item.id ? 'text-red-500 bg-gray-700 shadow-inner' : 'text-gray-500 hover:text-gray-300'}`}>
