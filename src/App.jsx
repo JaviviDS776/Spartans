@@ -10,7 +10,9 @@ import {
     signOut 
 } from 'firebase/auth';
 import { 
-    getFirestore, 
+    initializeFirestore,
+    persistentLocalCache,
+    persistentMultipleTabManager,
     doc, 
     collection, 
     onSnapshot, 
@@ -22,24 +24,29 @@ import {
     serverTimestamp,
     addDoc,
     updateDoc,
-    increment,
-    enableIndexedDbPersistence
+    increment
 } from 'firebase/firestore';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Radar as RechartRadar, Tooltip } from 'recharts';
 import { Settings, Users, Calendar, LogIn, ChevronLeft, Trash2, Plus, AlertTriangle, Loader, Volleyball, CheckCircle, Zap, Shield, User, X, Power, Heart, Check, RotateCw, Trophy, RotateCcw, Briefcase, Ruler, Scale, Activity, Crosshair, Minus, Map as MapIcon, Upload as UploadIcon, LogOut, Search, GripVertical, History, WifiOff, Phone, CalendarDays, Hash, Hand, Expand, Pencil, ClipboardList, CloudRain, CreditCard, ArrowLeftRight, Layout, RefreshCw, Shirt, Dumbbell, Medal } from 'lucide-react';
 
 // --- 1. CONFIGURACIÓN DE FIREBASE ---
 const firebaseConfig = {
-  apiKey: "AIzaSyBRGDv3s_XnaTMX4uKAueCd9TbBCTHX49M",
-  authDomain: "spartans-6a98a.firebaseapp.com",
-  projectId: "spartans-6a98a",
-  storageBucket: "spartans-6a98a.firebasestorage.app",
-  messagingSenderId: "557989512452",
-  appId: "1:557989512452:web:9fc229143eac9b214c3c51",
-  measurementId: "G-MV44BZD6YT"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-const appId = "spartans-6a98a"; 
+const app = initializeApp(firebaseConfig);
+const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
+const auth = getAuth(app);
+
+const appId = import.meta.env.VITE_APP_ID; 
 const initialAuthToken = null;
 
 // --- 2. CONSTANTES Y REFERENCIAS ---
@@ -106,8 +113,6 @@ const calculateAge = (birthDateString) => {
 
 // --- 4. HOOK DE FIREBASE ---
 function useFirebase() {
-    const [auth, setAuth] = useState(null);
-    const [db, setDb] = useState(null);
     const [userId, setUserId] = useState(null);
     const [userName, setUserName] = useState(null);
     const [userPhoto, setUserPhoto] = useState(null);
@@ -129,53 +134,30 @@ function useFirebase() {
     useEffect(() => {
         let unsubscribeAuth = null;
 
-        const init = async () => {
+        const initAuth = async () => {
             try {
-                if (Object.keys(firebaseConfig).length === 0) return;
-                const app = initializeApp(firebaseConfig);
-                const firestore = getFirestore(app);
-                
-                try {
-                    await enableIndexedDbPersistence(firestore);
-                    console.log("Persistencia offline habilitada correctamente.");
-                } catch (err) {
-                    if (err.code === 'failed-precondition') {
-                        console.warn("Persistencia fallida: Múltiples pestañas abiertas.");
-                    } else if (err.code === 'unimplemented') {
-                        console.warn("El navegador no soporta persistencia offline.");
-                    }
-                }
-
-                const authInstance = getAuth(app);
-                setDb(firestore); 
-                setAuth(authInstance);
-
-                const initAuth = async () => {
-                    try {
-                        if (initialAuthToken) {
-                            await signInWithCustomToken(authInstance, initialAuthToken);
-                        } 
-                    } catch (e) {
-                        console.warn("Auth Init Error:", e);
-                    }
-                };
-                initAuth();
-
-                unsubscribeAuth = onAuthStateChanged(authInstance, (user) => {
-                    if (user) { 
-                        setUserId(user.uid); 
-                        setUserName(user.displayName || 'Usuario');
-                        setUserPhoto(user.photoURL);
-                        setIsAuthReady(true); 
-                    } else {
-                        setUserId(null);
-                        setIsAuthReady(true); 
-                    }
-                });
-            } catch (e) { console.error(e); setError("Error initializing Firebase"); setIsAuthReady(true); }
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } 
+            } catch (e) {
+                console.warn("Auth Init Error:", e);
+                setError("Auth Init Error: " + e.message);
+            }
         };
+        initAuth();
 
-        init();
+        unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+            if (user) { 
+                setUserId(user.uid); 
+                setUserName(user.displayName || 'Usuario');
+                setUserPhoto(user.photoURL);
+            } else {
+                setUserId(null);
+                setUserName(null);
+                setUserPhoto(null);
+            }
+            setIsAuthReady(true); 
+        });
 
         return () => {
             if (unsubscribeAuth) unsubscribeAuth();
@@ -207,14 +189,14 @@ function useFirebase() {
         try { await signOut(auth); } catch (e) { console.error(e); }
     };
 
-    const initializeData = useCallback(async (database, currentUserId) => {
-        if (!database || !currentUserId) return;
+    const initializeData = useCallback(async (currentUserId) => {
+        if (!db || !currentUserId) return;
         const collections = getCollections(currentUserId);
         const checkAndPopulate = async (colName, data) => {
             try {
-                const s = await getDocs(collection(database, colName));
+                const s = await getDocs(collection(db, colName));
                 if (s.empty) {
-                    for (const item of data) await setDoc(doc(database, colName, item.id), { ...item, createdAt: serverTimestamp(), createdBy: currentUserId });
+                    for (const item of data) await setDoc(doc(db, colName, item.id), { ...item, createdAt: serverTimestamp(), createdBy: currentUserId });
                 }
             } catch(e) { console.error("Populate Error (posiblemente offline)", e); }
         };
@@ -226,7 +208,8 @@ function useFirebase() {
         }
     }, []);
 
-    useEffect(() => { if (db && userId && isAuthReady) initializeData(db, userId); }, [db, userId, isAuthReady, initializeData]);
+    useEffect(() => { if (userId && isAuthReady) initializeData(userId); }, [userId, isAuthReady, initializeData]);
+    
     return { db, auth, userId, userName, userPhoto, isAuthReady, error, loginWithGoogle, logout, isOffline };
 }
 
