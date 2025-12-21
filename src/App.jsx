@@ -1873,162 +1873,307 @@ const MatchesList = ({ db, userId, onStartTracking, showToast }) => {
     );
 };
 
-// --- 10. CONFIGURACIÓN ---
+
+
+
+
 const LineupManager = ({ db, userId, showToast }) => {
-    const POS = [{id:'pos4',l:'4', t:'Punta'},{id:'pos3',l:'3', t:'Central'},{id:'pos2',l:'2', t:'Arm/Op'},{id:'pos5',l:'5', t:'Defensa'},{id:'pos6',l:'6', t:'Defensa'},{id:'pos1',l:'1', t:'Saque'}];
+
+    const POS = [
+        { id: 'pos4', l: '4', t: 'Punta' },
+        { id: 'pos3', l: '3', t: 'Central' },
+        { id: 'pos2', l: '2', t: 'Arm/Op' },
+        { id: 'pos5', l: '5', t: 'Defensa' },
+        { id: 'pos6', l: '6', t: 'Defensa' },
+        { id: 'pos1', l: '1', t: 'Saque' }
+    ];
+
     const [players, setPlayers] = useState([]);
     const [lineup, setLineup] = useState({});
+    const [liberoId, setLiberoId] = useState(null);
+    const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+
     const [name, setName] = useState('');
     const [filter, setFilter] = useState('TODOS');
-    const [filterRama, setFilterRama] = useState('Varonil'); // Default Lineup Filter
-    const [dragOver, setDragOver] = useState(null);
+    const [filterRama, setFilterRama] = useState('Varonil');
+
     const collections = getCollections(userId);
 
-    // Nuevo estado para el libero
-    const [liberoId, setLiberoId] = useState(null);
+    /* =========================
+       CARGA DE JUGADORES
+    ========================= */
+    useEffect(() => {
+        if (!db || !userId) return;
+        return onSnapshot(
+            query(collection(db, collections.JUGADORES)),
+            snap => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+            err => console.error(err)
+        );
+    }, [db, userId]);
 
-    useEffect(() => { if(db && userId) onSnapshot(query(collection(db, collections.JUGADORES)), s => setPlayers(s.docs.map(d=>({id:d.id,...d.data()}))), e=>console.log(e)); }, [db, userId]);
-    
-    const handleDrop = (pos, pid) => {
-        setDragOver(null);
-        // Si el jugador arrastrado es libero, y la posición no es la de "libero especial", no permitir si ya hay uno? No, la validación se hace al guardar.
-        setLineup(p => { const n={...p}; Object.keys(n).forEach(k=>{if(n[k]===pid)delete n[k]}); n[pos]=pid; return n; });
+    /* =========================
+       ASIGNAR A POSICIÓN
+    ========================= */
+    const assignToPosition = (posId) => {
+        if (!selectedPlayerId) return;
+
+        setLineup(prev => {
+            const n = { ...prev };
+            Object.keys(n).forEach(k => {
+                if (n[k] === selectedPlayerId) delete n[k];
+            });
+            n[posId] = selectedPlayerId;
+            return n;
+        });
+
+        setSelectedPlayerId(null);
     };
 
-    const handleDropLibero = (pid) => {
-        // Verificar si el jugador ya está en la alineación titular
-        const isInLineup = Object.values(lineup).includes(pid);
-        if (isInLineup) {
+    /* =========================
+       ASIGNAR LÍBERO
+    ========================= */
+    const assignLibero = () => {
+        if (!selectedPlayerId) return;
+
+        if (Object.values(lineup).includes(selectedPlayerId)) {
             showToast("El jugador ya está en la alineación titular", "error");
             return;
         }
-        setLiberoId(pid);
+
+        setLiberoId(selectedPlayerId);
+        setSelectedPlayerId(null);
     };
 
+    /* =========================
+       GUARDAR
+    ========================= */
+    const save = async () => {
+        if (!name || Object.keys(lineup).length !== 6)
+            return showToast("Completa la alineación y el nombre", "error");
 
-    const save = async () => { 
-        if(!name || Object.keys(lineup).length!==6) return showToast("Completa la alineación y el nombre", "error"); 
-        
-        // Validación de roles obligatorios
-        const assignedIds = Object.values(lineup);
-        const assignedPlayers = players.filter(p => assignedIds.includes(p.id));
-        
-        const count = (role) => assignedPlayers.filter(p => p.posicion === role).length;
-        
-        if (count('Punta') !== 2) return showToast("Debe haber exactamente 2 Puntas", "error");
-        if (count('Central') !== 2) return showToast("Debe haber exactamente 2 Centrales", "error");
-        if (count('Opuesto') !== 1 && count('Armador') !== 1) return showToast("Debe haber 1 Opuesto y 1 Armador (o 2 Opuesto/Armador)", "error");
+        const assignedPlayers = players.filter(p =>
+            Object.values(lineup).includes(p.id)
+        );
+
+        const count = (role) =>
+            assignedPlayers.filter(p => p.posicion === role).length;
+
+        if (count('Punta') !== 2)
+            return showToast("Debe haber exactamente 2 Puntas", "error");
+
+        if (count('Central') !== 2)
+            return showToast("Debe haber exactamente 2 Centrales", "error");
+
+        if (count('Opuesto') !== 1 && count('Armador') !== 1)
+            return showToast("Debe haber 1 Opuesto y 1 Armador", "error");
 
         await addDoc(collection(db, collections.ALINEACIONES), {
-            nombre: name, 
-            formacion: lineup, 
-            libero: liberoId, // Guardar el libero opcional
+            nombre: name,
+            formacion: lineup,
+            libero: liberoId,
             createdBy: userId
-        }); 
-        setName(''); 
+        });
+
+        setName('');
         setLineup({});
         setLiberoId(null);
-        showToast("Alineación guardada", "success"); 
+        setSelectedPlayerId(null);
+        showToast("Alineación guardada", "success");
     };
-    
-    const assignedIds = Object.values(lineup);
-    if(liberoId) assignedIds.push(liberoId);
 
-    const availablePlayers = players.filter(p => !assignedIds.includes(p.id) && (filter === 'TODOS' || p.posicion === filter) && (p.rama === filterRama));
+    /* =========================
+       FILTROS
+    ========================= */
+    const assignedIds = Object.values(lineup);
+    if (liberoId) assignedIds.push(liberoId);
+
+    const availablePlayers = players.filter(p =>
+        !assignedIds.includes(p.id) &&
+        (filter === 'TODOS' || p.posicion === filter) &&
+        p.rama === filterRama
+    );
+
     const liberoPlayer = players.find(p => p.id === liberoId);
 
+    /* =========================
+       RENDER
+    ========================= */
     return (
-        
-        <div className="space-y-4 pb-20 grid-cols-2" style={{gridTemplateColumns: "repeat(2, minmax(0, 1fr))", display: "grid", gap: "11px"}}>
+        <div className="grid grid-cols-2 gap-3 pb-20">
 
+            {/* ================= CAMPO ================= */}
             <div className="space-y-4">
-                <div className="flex justify-between items-center mb-2"><h2 className="text-2xl font-black text-white tracking-tight">Creador de Alineaciones</h2></div>
-                <div className="flex gap-2"><input className="flex-1 bg-gray-900 border-gray-600 border p-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition" placeholder="Nombre de la Alineación" value={name} onChange={e=>setName(e.target.value)}/><button onClick={save} className="bg-red-600 hover:bg-red-500 text-white px-6 rounded-lg font-bold shadow-lg transition">Guardar</button></div>
-                {/* Visual Court Design for Drag & Drop */}
-                <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-xl relative overflow-hidden">
-                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-10 pointer-events-none"></div>
-                    <div className="text-center mb-2 text-xs font-bold text-gray-500 uppercase tracking-widest">Zona de Red ({filterRama})</div>
-                    <div className="grid grid-cols-3 gap-2 relative z-10">
-                        <div className="col-span-3 h-1 bg-white/20 mb-2 rounded"></div>
-                        {POS.map(p => { 
-                            const player = players.find(pl => pl.id === lineup[p.id]); 
-                            const isOver = dragOver === p.id;
+
+                <h2 className="text-2xl font-black text-white">
+                    Creador de Alineaciones
+                </h2>
+
+                <div className="flex gap-2">
+                    <input
+                        className="flex-1 bg-gray-900 border border-gray-600 p-3 rounded-lg text-white"
+                        placeholder="Nombre de la Alineación"
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                    />
+                    <button
+                        onClick={save}
+                        className="bg-red-600 hover:bg-red-500 text-white px-6 rounded-lg font-bold"
+                    >
+                        Guardar
+                    </button>
+                </div>
+
+                <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
+                    <div className="grid grid-cols-3 gap-2">
+                        {POS.map(p => {
+                            const player = players.find(pl => pl.id === lineup[p.id]);
                             return (
-                                <div 
-                                    key={p.id} 
-                                    onDragOver={e=>{e.preventDefault(); setDragOver(p.id)}} 
-                                    onDragLeave={()=>setDragOver(null)}
-                                    onDrop={e=>{const pid=e.dataTransfer.getData("id"); if(pid) handleDrop(p.id, pid)}} 
-                                    draggable={!!player} 
-                                    onDragStart={e=>player && e.dataTransfer.setData("id", player.id)} 
-                                    className={`h-24 rounded-lg flex flex-col items-center justify-center border-2 transition-all duration-200 relative group
-                                        ${isOver ? 'border-emerald-400 bg-emerald-900/30 scale-105 shadow-emerald-500/20 shadow-lg' : 'border-dashed border-gray-600 bg-gray-900/50'} 
-                                        ${player ? 'border-solid border-red-500 bg-gray-800 shadow-md cursor-grab active:cursor-grabbing' : ''}`
-                                    }
+                                <div
+                                    key={p.id}
+                                    onClick={() => assignToPosition(p.id)}
+                                    className={`relative h-24 rounded-lg flex flex-col items-center justify-center border-2 transition
+                                        ${player
+                                            ? 'border-red-500 bg-gray-800'
+                                            : 'border-dashed border-gray-600 bg-gray-900/50'}
+                                        ${selectedPlayerId ? 'ring-2 ring-blue-500/30' : ''}
+                                    `}
                                 >
-                                    <span className="absolute top-1 left-2 text-[10px] font-black text-gray-600 opacity-50">P{p.l}</span>
+                                    <span className="absolute top-1 left-2 text-[10px] text-gray-600">
+                                        P{p.l}
+                                    </span>
+
                                     {player ? (
                                         <>
-                                            <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 overflow-hidden border border-gray-500">{player.fotografia && <img src={player.fotografia} className="w-full h-full object-cover"/>}</div>
-                                            <span className="text-xs font-bold text-white leading-tight">{player.nombre}</span>
-                                            <span className="text-[9px] text-red-400">{player.posicion}</span>
-                                            <button onClick={()=>setLineup(prev=>{const n={...prev}; delete n[p.id]; return n;})} className="absolute -top-1 -right-1 bg-red-600 rounded-full p-0.5 text-white opacity-0 group-hover:opacity-100 transition"><X size={10}/></button>
+                                            <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 overflow-hidden border border-gray-500">
+                                                {player.fotografia
+                                                    ? <img src={player.fotografia} className="w-full h-full object-cover" />
+                                                    : <div className="w-full h-full bg-gray-600" />
+                                                }
+                                            </div>
+
+                                            <span className="text-xs font-bold text-white text-center leading-tight break-words line-clamp-2 px-1">
+                                                {player.nombre}
+                                            </span>
+                                            <span className="text-[9px] text-red-400">
+                                                {player.posicion}
+                                            </span>
+
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setLineup(prev => {
+                                                        const n = { ...prev };
+                                                        delete n[p.id];
+                                                        return n;
+                                                    });
+                                                }}
+                                                className="absolute -top-1 -right-1 bg-red-600 rounded-full p-0.5 text-white"
+                                            >
+                                                <X size={10} />
+                                            </button>
                                         </>
-                                    ) : <span className="text-xs text-gray-500 font-medium">Vacío</span>}
+                                    ) : (
+                                        <>
+                                            <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 opacity-40" />
+                                            <span className="text-xs text-gray-500">
+                                                Tap para asignar
+                                            </span>
+                                        </>
+                                    )}
                                 </div>
-                            ) 
+                            );
                         })}
                     </div>
-            </div>
-
-            {/* Area de Libero */}
-             <div 
-                onDragOver={e=>e.preventDefault()} 
-                onDrop={e=>{const pid=e.dataTransfer.getData("id"); if(pid) handleDropLibero(pid)}} 
-                className={`bg-gray-800 p-4 rounded-xl border-2 border-dashed ${liberoPlayer ? 'border-emerald-500 bg-emerald-900/10' : 'border-gray-600'} flex items-center justify-between`}
-            >
-                <div className="flex items-center">
-                    <div className="mr-3 p-2 bg-yellow-500/20 rounded-full text-yellow-500"><Shirt size={20}/></div>
-                    <div>
-                        <p className="text-sm font-bold text-gray-300 uppercase tracking-widest">Líbero (Opcional)</p>
-                        {liberoPlayer ? (
-                             <p className="text-emerald-400 font-bold text-sm">{liberoPlayer.nombre}</p>
-                        ) : (
-                             <p className="text-gray-500 text-xs">Arrastra aquí un jugador</p>
-                        )}
-                    </div>
                 </div>
-                {liberoPlayer && <button onClick={()=>setLiberoId(null)} className="text-red-500 hover:bg-red-900/30 p-2 rounded"><Trash2 size={16}/></button>}
+
+                {/* ================= LÍBERO ================= */}
+                <div
+                    onClick={assignLibero}
+                    className={`bg-gray-800 p-4 rounded-xl border-2 border-dashed flex items-center justify-between
+                        ${liberoPlayer
+                            ? 'border-emerald-500 bg-emerald-900/10'
+                            : 'border-gray-600'}
+                    `}
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gray-700 overflow-hidden border border-gray-500">
+                            {liberoPlayer?.fotografia
+                                ? <img src={liberoPlayer.fotografia} className="w-full h-full object-cover" />
+                                : <div className="w-full h-full bg-gray-600 opacity-40" />
+                            }
+                        </div>
+                        <p className="text-sm font-bold text-center leading-tight break-words line-clamp-2
+                                      text-emerald-400">
+                            {liberoPlayer ? liberoPlayer.nombre : 'Tap para asignar'}
+                        </p>
+                    </div>
+
+                    {liberoPlayer && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setLiberoId(null);
+                            }}
+                            className="text-red-500 hover:bg-red-900/30 p-2 rounded"
+                        >
+                            <X size={14} />
+                        </button>
+                    )}
+                </div>
             </div>
 
-            </div>
-            {/* Bench Area */}
+            {/* ================= BANCA ================= */}
             <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-sm font-bold text-gray-300 uppercase tracking-widest flex items-center"><Users className="w-4 h-4 mr-2"/> Banca / Disponibles</h3>
-                    <div className="flex gap-2">
-                        <button onClick={()=>setFilterRama(filterRama === 'Varonil' ? 'Femenil' : 'Varonil')} className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-[10px] font-bold text-white hover:bg-gray-600 flex items-center">
-                            {filterRama === 'Varonil' ? <span className="text-blue-300">Varonil</span> : <span className="text-pink-300">Femenil</span>}
-                            <RotateCcw className="w-3 h-3 ml-1" />
-                        </button>
-                    </div>
+                    <h3 className="text-sm font-bold text-gray-300 uppercase tracking-widest flex items-center">
+                        <Users className="w-4 h-4 mr-2" /> Banca
+                    </h3>
+                    <button
+                        onClick={() =>
+                            setFilterRama(filterRama === 'Varonil' ? 'Femenil' : 'Varonil')
+                        }
+                        className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-[10px] font-bold text-white flex items-center"
+                    >
+                        {filterRama}
+                        <RotateCcw className="w-3 h-3 ml-1" />
+                    </button>
                 </div>
-                <div className="flex gap-1 mb-2 overflow-x-auto pb-1">
-                    {['TODOS','Punta','Central','Líbero','Arm','Op'].map(f=><button key={f} onClick={()=>setFilter(f)} className={`px-2 py-0.5 rounded text-[10px] font-bold ${filter===f?'bg-red-600 text-white':'bg-gray-700 text-gray-400'}`}>{f}</button>)}
-                </div>
-                <div className="flex gap-2 overflow-x-auto pb-2 min-h-[90px] scrollbar-thin scrollbar-thumb-gray-600">
-                    {availablePlayers.length > 0 ? availablePlayers.map(p => (
-                        <div key={p.id} draggable onDragStart={e=>e.dataTransfer.setData("id", p.id)} className="bg-gray-900 p-2 rounded-lg shadow border border-gray-600 min-w-[90px] w-[90px] flex flex-col items-center cursor-grab active:cursor-grabbing hover:border-red-500 transition group">
-                            <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 overflow-hidden">{p.fotografia && <img src={p.fotografia} className="w-full h-full object-cover"/>}</div>
-                            <p className="text-xs font-bold truncate text-gray-200 w-full text-center">{p.nombre}</p>
-                            <p className="text-[9px] text-gray-500">{p.posicion}</p>
-                            <GripVertical className="w-3 h-3 text-gray-600 mt-1 opacity-0 group-hover:opacity-100 transition"/>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[420px] overflow-y-auto pr-1">
+                    {availablePlayers.length ? availablePlayers.map(p => (
+                        <div
+                            key={p.id}
+                            onClick={() => setSelectedPlayerId(p.id)}
+                            className={`p-2 rounded-lg border flex flex-col items-center cursor-pointer transition
+                                ${selectedPlayerId === p.id
+                                    ? 'border-blue-500 bg-blue-900/30'
+                                    : 'border-gray-600 bg-gray-900'}
+                            `}
+                        >
+                            <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 overflow-hidden border border-gray-500">
+                                {p.fotografia
+                                    ? <img src={p.fotografia} className="w-full h-full object-cover" />
+                                    : <div className="w-full h-full bg-gray-600" />
+                                }
+                            </div>
+
+                            <p className="text-xs font-bold text-white text-center leading-tight break-words line-clamp-2 px-1">
+                                {p.nombre}
+                            </p>
+
+                            <p className="text-[9px] text-gray-400">
+                                {p.posicion}
+                            </p>
                         </div>
-                    )) : <p className="text-xs text-gray-500 w-full text-center py-4">No hay jugadores disponibles.</p>}
+                    )) : (
+                        <p className="text-xs text-gray-500 col-span-full text-center py-6">
+                            No hay jugadores disponibles
+                        </p>
+                    )}
                 </div>
             </div>
         </div>
-    )
+    );
 };
 
 const StaffManager = ({ db, userId, showToast }) => {
