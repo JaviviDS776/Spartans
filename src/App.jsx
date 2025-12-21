@@ -1938,43 +1938,47 @@ const LineupManager = ({ db, userId, showToast }) => {
     const liberoPlayer = players.find(p => p.id === liberoId);
 
     return (
-        <div className="space-y-4 pb-20">
-            <div className="flex justify-between items-center mb-2"><h2 className="text-2xl font-black text-white tracking-tight">Creador de Alineaciones</h2></div>
-            {/* Visual Court Design for Drag & Drop */}
-            <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-xl relative overflow-hidden">
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-10 pointer-events-none"></div>
-                <div className="text-center mb-2 text-xs font-bold text-gray-500 uppercase tracking-widest">Zona de Red ({filterRama})</div>
-                <div className="grid grid-cols-3 gap-2 relative z-10">
-                    <div className="col-span-3 h-1 bg-white/20 mb-2 rounded"></div>
-                    {POS.map(p => { 
-                        const player = players.find(pl => pl.id === lineup[p.id]); 
-                        const isOver = dragOver === p.id;
-                        return (
-                            <div 
-                                key={p.id} 
-                                onDragOver={e=>{e.preventDefault(); setDragOver(p.id)}} 
-                                onDragLeave={()=>setDragOver(null)}
-                                onDrop={e=>{const pid=e.dataTransfer.getData("id"); if(pid) handleDrop(p.id, pid)}} 
-                                draggable={!!player} 
-                                onDragStart={e=>player && e.dataTransfer.setData("id", player.id)} 
-                                className={`h-24 rounded-lg flex flex-col items-center justify-center border-2 transition-all duration-200 relative group
-                                    ${isOver ? 'border-emerald-400 bg-emerald-900/30 scale-105 shadow-emerald-500/20 shadow-lg' : 'border-dashed border-gray-600 bg-gray-900/50'} 
-                                    ${player ? 'border-solid border-red-500 bg-gray-800 shadow-md cursor-grab active:cursor-grabbing' : ''}`
-                                }
-                            >
-                                <span className="absolute top-1 left-2 text-[10px] font-black text-gray-600 opacity-50">P{p.l}</span>
-                                {player ? (
-                                    <>
-                                        <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 overflow-hidden border border-gray-500">{player.fotografia && <img src={player.fotografia} className="w-full h-full object-cover"/>}</div>
-                                        <span className="text-xs font-bold text-white leading-tight">{player.nombre}</span>
-                                        <span className="text-[9px] text-red-400">{player.posicion}</span>
-                                        <button onClick={()=>setLineup(prev=>{const n={...prev}; delete n[p.id]; return n;})} className="absolute -top-1 -right-1 bg-red-600 rounded-full p-0.5 text-white opacity-0 group-hover:opacity-100 transition"><X size={10}/></button>
-                                    </>
-                                ) : <span className="text-xs text-gray-500 font-medium">Vacío</span>}
-                            </div>
-                        ) 
-                    })}
-                </div>
+        
+        <div className="space-y-4 pb-20 grid-cols-2" style={{gridTemplateColumns: "repeat(2, minmax(0, 1fr))", display: "grid", gap: "11px"}}>
+
+            <div className="space-y-4">
+                <div className="flex justify-between items-center mb-2"><h2 className="text-2xl font-black text-white tracking-tight">Creador de Alineaciones</h2></div>
+                <div className="flex gap-2"><input className="flex-1 bg-gray-900 border-gray-600 border p-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition" placeholder="Nombre de la Alineación" value={name} onChange={e=>setName(e.target.value)}/><button onClick={save} className="bg-red-600 hover:bg-red-500 text-white px-6 rounded-lg font-bold shadow-lg transition">Guardar</button></div>
+                {/* Visual Court Design for Drag & Drop */}
+                <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-xl relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-10 pointer-events-none"></div>
+                    <div className="text-center mb-2 text-xs font-bold text-gray-500 uppercase tracking-widest">Zona de Red ({filterRama})</div>
+                    <div className="grid grid-cols-3 gap-2 relative z-10">
+                        <div className="col-span-3 h-1 bg-white/20 mb-2 rounded"></div>
+                        {POS.map(p => { 
+                            const player = players.find(pl => pl.id === lineup[p.id]); 
+                            const isOver = dragOver === p.id;
+                            return (
+                                <div 
+                                    key={p.id} 
+                                    onDragOver={e=>{e.preventDefault(); setDragOver(p.id)}} 
+                                    onDragLeave={()=>setDragOver(null)}
+                                    onDrop={e=>{const pid=e.dataTransfer.getData("id"); if(pid) handleDrop(p.id, pid)}} 
+                                    draggable={!!player} 
+                                    onDragStart={e=>player && e.dataTransfer.setData("id", player.id)} 
+                                    className={`h-24 rounded-lg flex flex-col items-center justify-center border-2 transition-all duration-200 relative group
+                                        ${isOver ? 'border-emerald-400 bg-emerald-900/30 scale-105 shadow-emerald-500/20 shadow-lg' : 'border-dashed border-gray-600 bg-gray-900/50'} 
+                                        ${player ? 'border-solid border-red-500 bg-gray-800 shadow-md cursor-grab active:cursor-grabbing' : ''}`
+                                    }
+                                >
+                                    <span className="absolute top-1 left-2 text-[10px] font-black text-gray-600 opacity-50">P{p.l}</span>
+                                    {player ? (
+                                        <>
+                                            <div className="w-8 h-8 rounded-full bg-gray-700 mb-1 overflow-hidden border border-gray-500">{player.fotografia && <img src={player.fotografia} className="w-full h-full object-cover"/>}</div>
+                                            <span className="text-xs font-bold text-white leading-tight">{player.nombre}</span>
+                                            <span className="text-[9px] text-red-400">{player.posicion}</span>
+                                            <button onClick={()=>setLineup(prev=>{const n={...prev}; delete n[p.id]; return n;})} className="absolute -top-1 -right-1 bg-red-600 rounded-full p-0.5 text-white opacity-0 group-hover:opacity-100 transition"><X size={10}/></button>
+                                        </>
+                                    ) : <span className="text-xs text-gray-500 font-medium">Vacío</span>}
+                                </div>
+                            ) 
+                        })}
+                    </div>
             </div>
 
             {/* Area de Libero */}
@@ -1997,6 +2001,7 @@ const LineupManager = ({ db, userId, showToast }) => {
                 {liberoPlayer && <button onClick={()=>setLiberoId(null)} className="text-red-500 hover:bg-red-900/30 p-2 rounded"><Trash2 size={16}/></button>}
             </div>
 
+            </div>
             {/* Bench Area */}
             <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <div className="flex justify-between items-center mb-3">
@@ -2022,8 +2027,6 @@ const LineupManager = ({ db, userId, showToast }) => {
                     )) : <p className="text-xs text-gray-500 w-full text-center py-4">No hay jugadores disponibles.</p>}
                 </div>
             </div>
-
-            <div className="flex gap-2"><input className="flex-1 bg-gray-900 border-gray-600 border p-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition" placeholder="Nombre de la Alineación" value={name} onChange={e=>setName(e.target.value)}/><button onClick={save} className="bg-red-600 hover:bg-red-500 text-white px-6 rounded-lg font-bold shadow-lg transition">Guardar</button></div>
         </div>
     )
 };
@@ -2112,7 +2115,7 @@ export default function App() {
                     </div>
                 </header>
             )}
-            <main className="max-w-3xl mx-auto p-4">{renderContent()}</main>
+            <main className="max-w-3x2 mx-auto p-4">{renderContent()}</main>
             {view !== NAVIGATION.TRACKER && view !== NAVIGATION.TRAINING_TRACKER && (
                 <nav className="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 flex justify-around p-2 z-30 pb-safe shadow-[0_-5px_10px_rgba(0,0,0,0.3)]">
                     {[ { id: NAVIGATION.DASHBOARD, icon: Users }, { id: NAVIGATION.PARTIDOS, icon: Calendar }, { id: NAVIGATION.ASISTENCIA, icon: ClipboardList }, { id: NAVIGATION.PAGOS, icon: CreditCard }, { id: NAVIGATION.ALINEACIONES, icon: Shield }, { id: NAVIGATION.CONFIG, icon: Settings } ].map(item => (
